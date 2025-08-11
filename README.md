@@ -32,6 +32,14 @@ This contract allows users to:
 - 🏭 Filter by business sector
 - 📋 Calculate portfolio-wide ethics averages
 
+### Performance Tracking
+- 💹 Real-time investment price tracking
+- 📊 Portfolio valuation calculations
+- 📈 Individual investment return analysis
+- 💰 Portfolio-wide return calculations
+- 🏆 Top performing investments ranking
+- 📝 Price history tracking
+
 ## 🔧 Contract Functions
 
 ### Public Functions
@@ -59,6 +67,12 @@ Removes specified amount of an investment from your portfolio.
 (toggle-contract-active)
 ```
 Owner-only function to activate/deactivate the contract.
+
+#### `update-investment-price`
+```clarity
+(update-investment-price investment-id new-price)
+```
+Updates the current price of an investment and records price history.
 
 ### Read-Only Functions
 
@@ -110,6 +124,42 @@ Returns investments meeting minimum overall ESG score.
 ```
 Returns investments from specific business sector.
 
+#### `get-investment-price`
+```clarity
+(get-investment-price investment-id)
+```
+Returns current price and last update information for an investment.
+
+#### `calculate-portfolio-value`
+```clarity
+(calculate-portfolio-value user)
+```
+Calculates total portfolio value and cost basis.
+
+#### `calculate-investment-return`
+```clarity
+(calculate-investment-return user investment-id)
+```
+Calculates return percentage and profit/loss for a specific investment.
+
+#### `calculate-portfolio-return`
+```clarity
+(calculate-portfolio-return user)
+```
+Calculates overall portfolio return percentage and total gains/losses.
+
+#### `get-top-performers`
+```clarity
+(get-top-performers user)
+```
+Returns the top performing investments in a user's portfolio.
+
+#### `get-price-history`
+```clarity
+(get-price-history investment-id block-height)
+```
+Returns historical price data for a specific investment at a given block.
+
 ## 🎯 Usage Examples
 
 ### Adding an Investment
@@ -141,6 +191,27 @@ Returns investments from specific business sector.
 ### Calculating Portfolio Ethics
 ```clarity
 (contract-call? .ethical-investment-tracker calculate-portfolio-ethics 
+  'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
+```
+
+### Performance Tracking Examples
+
+#### Updating Investment Price
+```clarity
+(contract-call? .ethical-investment-tracker update-investment-price 
+  u1 
+  u55000)
+```
+
+#### Calculating Portfolio Returns
+```clarity
+(contract-call? .ethical-investment-tracker calculate-portfolio-return 
+  'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
+```
+
+#### Getting Top Performers
+```clarity
+(contract-call? .ethical-investment-tracker get-top-performers 
   'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
 ```
 

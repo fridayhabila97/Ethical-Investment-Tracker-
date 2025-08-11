@@ -5,6 +5,8 @@
 (define-constant ERR_INVALID_SCORE (err u103))
 (define-constant ERR_INVALID_AMOUNT (err u104))
 (define-constant ERR_PORTFOLIO_EMPTY (err u105))
+(define-constant ERR_INVALID_PRICE (err u106))
+(define-constant ERR_PRICE_NOT_SET (err u107))
 
 (define-data-var contract-active bool true)
 (define-data-var total-investments uint u0)
@@ -19,7 +21,17 @@
     governance-score: uint,
     overall-score: uint,
     sector: (string-ascii 30),
-    creator: principal
+    creator: principal,
+    current-price: uint,
+    last-price-update: uint
+  }
+)
+
+(define-map price-history
+  { investment-id: uint, block-height: uint }
+  {
+    price: uint,
+    timestamp: uint
   }
 )
 
@@ -68,7 +80,9 @@
         governance-score: governance-score,
         overall-score: overall-score,
         sector: sector,
-        creator: tx-sender
+        creator: tx-sender,
+        current-price: u0,
+        last-price-update: u0
       }
     )
     
@@ -391,5 +405,207 @@
     (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
     (var-set contract-active (not (var-get contract-active)))
     (ok (var-get contract-active))
+  )
+)
+
+(define-public (update-investment-price (investment-id uint) (new-price uint))
+  (let 
+    (
+      (investment (unwrap! (map-get? investments { investment-id: investment-id }) ERR_INVESTMENT_NOT_FOUND))
+      (old-price (get current-price investment))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (> new-price u0) ERR_INVALID_PRICE)
+    
+    (map-set investments
+      { investment-id: investment-id }
+      (merge investment {
+        current-price: new-price,
+        last-price-update: stacks-block-height
+      })
+    )
+    
+    (map-set price-history
+      { investment-id: investment-id, block-height: stacks-block-height }
+      {
+        price: new-price,
+        timestamp: stacks-block-height
+      }
+    )
+    
+    (ok { old-price: old-price, new-price: new-price, change: (if (> new-price old-price) (- new-price old-price) (- old-price new-price)) })
+  )
+)
+
+(define-read-only (get-investment-price (investment-id uint))
+  (let 
+    (
+      (investment (unwrap! (map-get? investments { investment-id: investment-id }) ERR_INVESTMENT_NOT_FOUND))
+    )
+    (ok {
+      current-price: (get current-price investment),
+      last-update: (get last-price-update investment)
+    })
+  )
+)
+
+(define-read-only (calculate-portfolio-value (user principal))
+  (let 
+    (
+      (portfolio-count (get-portfolio-count user))
+    )
+    (if (is-eq portfolio-count u0)
+      (err ERR_PORTFOLIO_EMPTY)
+      (ok (fold calculate-value-helper (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13 u14 u15 u16 u17 u18 u19 u20)
+               { user: user, total-value: u0, total-cost: u0, count: u0 }))
+    )
+  )
+)
+
+(define-private (calculate-value-helper (investment-id uint) (acc { user: principal, total-value: uint, total-cost: uint, count: uint }))
+  (let 
+    (
+      (holding (map-get? user-portfolios { user: (get user acc), investment-id: investment-id }))
+      (investment (map-get? investments { investment-id: investment-id }))
+    )
+    (if (and (is-some holding) (is-some investment))
+      (let 
+        (
+          (holding-data (unwrap-panic holding))
+          (investment-data (unwrap-panic investment))
+          (current-price (get current-price investment-data))
+          (amount (get amount holding-data))
+          (purchase-price (get purchase-price holding-data))
+          (current-value (* amount current-price))
+          (original-cost (* amount purchase-price))
+        )
+        {
+          user: (get user acc),
+          total-value: (+ (get total-value acc) current-value),
+          total-cost: (+ (get total-cost acc) original-cost),
+          count: (+ (get count acc) u1)
+        }
+      )
+      acc
+    )
+  )
+)
+
+(define-read-only (calculate-investment-return (user principal) (investment-id uint))
+  (let 
+    (
+      (holding (unwrap! (map-get? user-portfolios { user: user, investment-id: investment-id }) ERR_INVESTMENT_NOT_FOUND))
+      (investment (unwrap! (map-get? investments { investment-id: investment-id }) ERR_INVESTMENT_NOT_FOUND))
+      (current-price (get current-price investment))
+      (purchase-price (get purchase-price holding))
+      (amount (get amount holding))
+    )
+    (asserts! (> current-price u0) ERR_PRICE_NOT_SET)
+    (asserts! (> purchase-price u0) ERR_PRICE_NOT_SET)
+    
+    (let 
+      (
+        (current-value (* amount current-price))
+        (original-cost (* amount purchase-price))
+        (absolute-return (if (> current-value original-cost) 
+                           (- current-value original-cost) 
+                           (- original-cost current-value)))
+        (is-profit (> current-value original-cost))
+        (return-percentage (if (> original-cost u0) 
+                             (/ (* absolute-return u100) original-cost) 
+                             u0))
+      )
+      (ok {
+        original-cost: original-cost,
+        current-value: current-value,
+        absolute-return: absolute-return,
+        return-percentage: return-percentage,
+        is-profit: is-profit
+      })
+    )
+  )
+)
+
+(define-read-only (get-price-history (investment-id uint) (target-block uint))
+  (map-get? price-history { investment-id: investment-id, block-height: target-block })
+)
+
+(define-read-only (calculate-portfolio-return (user principal))
+  (let 
+    (
+      (portfolio-value-result (calculate-portfolio-value user))
+    )
+    (match portfolio-value-result
+      success 
+        (let 
+          (
+            (total-value (get total-value success))
+            (total-cost (get total-cost success))
+            (absolute-return (if (> total-value total-cost) 
+                               (- total-value total-cost) 
+                               (- total-cost total-value)))
+            (is-profit (> total-value total-cost))
+            (return-percentage (if (> total-cost u0) 
+                                 (/ (* absolute-return u100) total-cost) 
+                                 u0))
+          )
+          (ok {
+            total-cost: total-cost,
+            total-value: total-value,
+            absolute-return: absolute-return,
+            return-percentage: return-percentage,
+            is-profit: is-profit,
+            investment-count: (get count success)
+          })
+        )
+      error (err error)
+    )
+  )
+)
+
+(define-read-only (get-top-performers (user principal))
+  (ok (fold performance-ranking-helper (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13 u14 u15 u16 u17 u18 u19 u20)
+           { user: user, performers: (list) }))
+)
+
+(define-private (performance-ranking-helper (investment-id uint) (acc { user: principal, performers: (list 5 { investment-id: uint, return-percentage: uint }) }))
+  (let 
+    (
+      (holding (map-get? user-portfolios { user: (get user acc), investment-id: investment-id }))
+      (investment (map-get? investments { investment-id: investment-id }))
+    )
+    (if (and (is-some holding) (is-some investment))
+      (let 
+        (
+          (holding-data (unwrap-panic holding))
+          (investment-data (unwrap-panic investment))
+          (current-price (get current-price investment-data))
+          (purchase-price (get purchase-price holding-data))
+          (amount (get amount holding-data))
+          (current-performers (get performers acc))
+        )
+        (if (and (> current-price u0) (> purchase-price u0))
+          (let 
+            (
+              (current-value (* amount current-price))
+              (original-cost (* amount purchase-price))
+              (return-percentage (if (> original-cost u0) 
+                                   (/ (* (if (> current-value original-cost) 
+                                           (- current-value original-cost) 
+                                           u0) u100) original-cost) 
+                                   u0))
+              (performance-entry { investment-id: investment-id, return-percentage: return-percentage })
+            )
+            {
+              user: (get user acc),
+              performers: (default-to current-performers 
+                            (as-max-len? (append current-performers performance-entry) u5))
+            }
+          )
+          acc
+        )
+      )
+      acc
+    )
   )
 )
