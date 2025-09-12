@@ -40,6 +40,14 @@ This contract allows users to:
 - 🏆 Top performing investments ranking
 - 📝 Price history tracking
 
+### Community ESG Verification
+- 🗳️ Decentralized ESG score validation system
+- 🏅 Reputation-based verifier scoring
+- 📊 Community-driven consensus mechanisms
+- ⚖️ Democratic dispute resolution
+- 🔒 Time-locked voting periods
+- 📈 Consensus strength indicators
+
 ## 🔧 Contract Functions
 
 ### Public Functions
@@ -73,6 +81,30 @@ Owner-only function to activate/deactivate the contract.
 (update-investment-price investment-id new-price)
 ```
 Updates the current price of an investment and records price history.
+
+#### `propose-esg-verification`
+```clarity
+(propose-esg-verification investment-id proposed-env-score proposed-social-score proposed-gov-score)
+```
+Proposes new ESG scores for community verification and voting.
+
+#### `vote-on-verification`
+```clarity
+(vote-on-verification verification-id approve)
+```
+Casts a weighted vote on a proposed ESG verification.
+
+#### `finalize-verification`
+```clarity
+(finalize-verification verification-id)
+```
+Finalizes a verification proposal and updates scores if approved.
+
+#### `set-min-reputation-to-vote`
+```clarity
+(set-min-reputation-to-vote new-min)
+```
+Owner-only function to set minimum reputation required to participate in voting.
 
 ### Read-Only Functions
 
@@ -160,6 +192,36 @@ Returns the top performing investments in a user's portfolio.
 ```
 Returns historical price data for a specific investment at a given block.
 
+#### `get-verification`
+```clarity
+(get-verification verification-id)
+```
+Returns verification proposal details and voting status.
+
+#### `get-verifier-reputation`
+```clarity
+(get-verifier-reputation verifier)
+```
+Returns reputation score and voting history for a verifier.
+
+#### `get-verification-vote`
+```clarity
+(get-verification-vote verification-id voter)
+```
+Returns a specific voter's choice and voting power for a verification.
+
+#### `get-active-verifications`
+```clarity
+(get-active-verifications)
+```
+Returns list of currently active verification proposals.
+
+#### `calculate-consensus-score`
+```clarity
+(calculate-consensus-score investment-id)
+```
+Returns investment scores with consensus strength indicators.
+
 ## 🎯 Usage Examples
 
 ### Adding an Investment
@@ -213,6 +275,30 @@ Returns historical price data for a specific investment at a given block.
 ```clarity
 (contract-call? .ethical-investment-tracker get-top-performers 
   'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
+```
+
+### Community Verification Examples
+
+#### Proposing ESG Score Updates
+```clarity
+(contract-call? .ethical-investment-tracker propose-esg-verification 
+  u1 
+  u90 
+  u85 
+  u88)
+```
+
+#### Voting on Verifications
+```clarity
+(contract-call? .ethical-investment-tracker vote-on-verification 
+  u1 
+  true)
+```
+
+#### Checking Consensus Strength
+```clarity
+(contract-call? .ethical-investment-tracker calculate-consensus-score 
+  u1)
 ```
 
 ## 📊 ESG Scoring System

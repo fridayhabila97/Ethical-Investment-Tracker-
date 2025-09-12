@@ -7,9 +7,15 @@
 (define-constant ERR_PORTFOLIO_EMPTY (err u105))
 (define-constant ERR_INVALID_PRICE (err u106))
 (define-constant ERR_PRICE_NOT_SET (err u107))
+(define-constant ERR_ALREADY_VOTED (err u108))
+(define-constant ERR_VERIFICATION_NOT_FOUND (err u109))
+(define-constant ERR_INSUFFICIENT_REPUTATION (err u110))
+(define-constant ERR_VOTING_CLOSED (err u111))
 
 (define-data-var contract-active bool true)
 (define-data-var total-investments uint u0)
+(define-data-var verification-counter uint u0)
+(define-data-var min-reputation-to-vote uint u10)
 
 (define-map investments
   { investment-id: uint }
@@ -52,6 +58,31 @@
 (define-map investment-holders
   { investment-id: uint }
   { holder-count: uint }
+)
+
+(define-map verifier-reputation
+  { verifier: principal }
+  { reputation-score: uint, total-votes: uint, accurate-votes: uint }
+)
+
+(define-map esg-verifications
+  { verification-id: uint }
+  {
+    investment-id: uint,
+    proposed-env-score: uint,
+    proposed-social-score: uint,
+    proposed-gov-score: uint,
+    proposer: principal,
+    voting-end-block: uint,
+    total-votes: uint,
+    approval-votes: uint,
+    status: uint
+  }
+)
+
+(define-map verification-votes
+  { verification-id: uint, voter: principal }
+  { vote: bool, voting-power: uint }
 )
 
 (define-public (add-investment 
@@ -607,5 +638,249 @@
       )
       acc
     )
+  )
+)
+(define-public (propose-esg-verification 
+  (investment-id uint)
+  (proposed-env-score uint)
+  (proposed-social-score uint)
+  (proposed-gov-score uint))
+  (let 
+    (
+      (verification-id (+ (var-get verification-counter) u1))
+      (investment (unwrap! (map-get? investments { investment-id: investment-id }) ERR_INVESTMENT_NOT_FOUND))
+      (proposer-reputation (default-to { reputation-score: u0, total-votes: u0, accurate-votes: u0 } 
+                             (map-get? verifier-reputation { verifier: tx-sender })))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (and (<= proposed-env-score u100) (<= proposed-social-score u100) (<= proposed-gov-score u100)) ERR_INVALID_SCORE)
+    (asserts! (>= (get reputation-score proposer-reputation) (var-get min-reputation-to-vote)) ERR_INSUFFICIENT_REPUTATION)
+    
+    (map-set esg-verifications
+      { verification-id: verification-id }
+      {
+        investment-id: investment-id,
+        proposed-env-score: proposed-env-score,
+        proposed-social-score: proposed-social-score,
+        proposed-gov-score: proposed-gov-score,
+        proposer: tx-sender,
+        voting-end-block: (+ stacks-block-height u144),
+        total-votes: u0,
+        approval-votes: u0,
+        status: u0
+      }
+    )
+    
+    (var-set verification-counter verification-id)
+    (ok verification-id)
+  )
+)
+
+(define-public (vote-on-verification (verification-id uint) (approve bool))
+  (let 
+    (
+      (verification (unwrap! (map-get? esg-verifications { verification-id: verification-id }) ERR_VERIFICATION_NOT_FOUND))
+      (voter-reputation (default-to { reputation-score: u0, total-votes: u0, accurate-votes: u0 } 
+                          (map-get? verifier-reputation { verifier: tx-sender })))
+      (existing-vote (map-get? verification-votes { verification-id: verification-id, voter: tx-sender }))
+      (voting-power (let ((calculated-power (/ (get reputation-score voter-reputation) u10)))
+                      (if (> calculated-power u0) calculated-power u1)))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (>= (get reputation-score voter-reputation) (var-get min-reputation-to-vote)) ERR_INSUFFICIENT_REPUTATION)
+    (asserts! (< stacks-block-height (get voting-end-block verification)) ERR_VOTING_CLOSED)
+    (asserts! (is-none existing-vote) ERR_ALREADY_VOTED)
+    (asserts! (is-eq (get status verification) u0) ERR_VOTING_CLOSED)
+    
+    (map-set verification-votes
+      { verification-id: verification-id, voter: tx-sender }
+      { vote: approve, voting-power: voting-power }
+    )
+    
+    (map-set esg-verifications
+      { verification-id: verification-id }
+      (merge verification {
+        total-votes: (+ (get total-votes verification) voting-power),
+        approval-votes: (+ (get approval-votes verification) (if approve voting-power u0))
+      })
+    )
+    
+    (ok true)
+  )
+)
+
+(define-public (finalize-verification (verification-id uint))
+  (let 
+    (
+      (verification (unwrap! (map-get? esg-verifications { verification-id: verification-id }) ERR_VERIFICATION_NOT_FOUND))
+      (investment (unwrap! (map-get? investments { investment-id: (get investment-id verification) }) ERR_INVESTMENT_NOT_FOUND))
+      (approval-rate (if (> (get total-votes verification) u0) 
+                       (/ (* (get approval-votes verification) u100) (get total-votes verification))
+                       u0))
+      (is-approved (>= approval-rate u60))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (>= stacks-block-height (get voting-end-block verification)) ERR_VOTING_CLOSED)
+    (asserts! (is-eq (get status verification) u0) ERR_VOTING_CLOSED)
+    
+    (if is-approved
+      (let 
+        (
+          (new-overall-score (/ (+ (get proposed-env-score verification) 
+                                   (get proposed-social-score verification) 
+                                   (get proposed-gov-score verification)) u3))
+        )
+        (map-set investments
+          { investment-id: (get investment-id verification) }
+          (merge investment {
+            environmental-score: (get proposed-env-score verification),
+            social-score: (get proposed-social-score verification),
+            governance-score: (get proposed-gov-score verification),
+            overall-score: new-overall-score
+          })
+        )
+        (map-set esg-verifications
+          { verification-id: verification-id }
+          (merge verification { status: u1 })
+        )
+        (unwrap-panic (update-verifier-reputation (get proposer verification) true))
+      )
+      (begin
+        (map-set esg-verifications
+          { verification-id: verification-id }
+          (merge verification { status: u2 })
+        )
+        (unwrap-panic (update-verifier-reputation (get proposer verification) false))
+      )
+    )
+    
+    (ok is-approved)
+  )
+)
+
+(define-private (update-verifier-reputation (verifier principal) (was-accurate bool))
+  (let 
+    (
+      (current-rep (default-to { reputation-score: u0, total-votes: u0, accurate-votes: u0 } 
+                     (map-get? verifier-reputation { verifier: verifier })))
+      (new-total-votes (+ (get total-votes current-rep) u1))
+      (new-accurate-votes (+ (get accurate-votes current-rep) (if was-accurate u1 u0)))
+      (new-reputation-score (if (> new-total-votes u0) 
+                              (/ (* new-accurate-votes u100) new-total-votes)
+                              u0))
+    )
+    (map-set verifier-reputation
+      { verifier: verifier }
+      {
+        reputation-score: new-reputation-score,
+        total-votes: new-total-votes,
+        accurate-votes: new-accurate-votes
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-read-only (get-verification (verification-id uint))
+  (map-get? esg-verifications { verification-id: verification-id })
+)
+
+(define-read-only (get-verifier-reputation (verifier principal))
+  (map-get? verifier-reputation { verifier: verifier })
+)
+
+(define-read-only (get-verification-vote (verification-id uint) (voter principal))
+  (map-get? verification-votes { verification-id: verification-id, voter: voter })
+)
+
+(define-read-only (get-active-verifications)
+  (ok (fold collect-active-verifications (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13 u14 u15 u16 u17 u18 u19 u20)
+           { results: (list), current-block: stacks-block-height }))
+)
+
+(define-private (collect-active-verifications (verification-id uint) (acc { results: (list 10 uint), current-block: uint }))
+  (let 
+    (
+      (verification (map-get? esg-verifications { verification-id: verification-id }))
+      (current-results (get results acc))
+    )
+    (if (is-some verification)
+      (let 
+        (
+          (verification-data (unwrap-panic verification))
+        )
+        (if (and (< (get current-block acc) (get voting-end-block verification-data))
+                 (is-eq (get status verification-data) u0))
+          {
+            results: (default-to current-results 
+                       (as-max-len? (append current-results verification-id) u10)),
+            current-block: (get current-block acc)
+          }
+          acc
+        )
+      )
+      acc
+    )
+  )
+)
+
+(define-read-only (calculate-consensus-score (investment-id uint))
+  (let 
+    (
+      (investment (unwrap! (map-get? investments { investment-id: investment-id }) ERR_INVESTMENT_NOT_FOUND))
+      (verification-count (fold count-verifications (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13 u14 u15 u16 u17 u18 u19 u20)
+                            { target-investment: investment-id, count: u0 }))
+    )
+    (ok {
+      current-scores: {
+        environmental: (get environmental-score investment),
+        social: (get social-score investment),
+        governance: (get governance-score investment),
+        overall: (get overall-score investment)
+      },
+      verification-count: (get count verification-count),
+      consensus-strength: (let ((calculated-strength (* (get count verification-count) u10)))
+                        (if (< calculated-strength u100) calculated-strength u100))
+    })
+  )
+)
+
+(define-private (count-verifications (verification-id uint) (acc { target-investment: uint, count: uint }))
+  (let 
+    (
+      (verification (map-get? esg-verifications { verification-id: verification-id }))
+    )
+    (if (is-some verification)
+      (let 
+        (
+          (verification-data (unwrap-panic verification))
+        )
+        (if (and (is-eq (get investment-id verification-data) (get target-investment acc))
+                 (is-eq (get status verification-data) u1))
+          {
+            target-investment: (get target-investment acc),
+            count: (+ (get count acc) u1)
+          }
+          acc
+        )
+      )
+      acc
+    )
+  )
+)
+
+(define-read-only (get-verification-counter)
+  (var-get verification-counter)
+)
+
+(define-read-only (get-min-reputation-to-vote)
+  (var-get min-reputation-to-vote)
+)
+
+(define-public (set-min-reputation-to-vote (new-min uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (var-set min-reputation-to-vote new-min)
+    (ok new-min)
   )
 )
