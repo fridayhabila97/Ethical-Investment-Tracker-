@@ -11,6 +11,9 @@
 (define-constant ERR_VERIFICATION_NOT_FOUND (err u109))
 (define-constant ERR_INSUFFICIENT_REPUTATION (err u110))
 (define-constant ERR_VOTING_CLOSED (err u111))
+(define-constant ERR_GOAL_NOT_FOUND (err u112))
+(define-constant ERR_INVALID_GOAL (err u113))
+(define-constant ERR_GOAL_EXISTS (err u114))
 
 (define-data-var contract-active bool true)
 (define-data-var total-investments uint u0)
@@ -83,6 +86,41 @@
 (define-map verification-votes
   { verification-id: uint, voter: principal }
   { vote: bool, voting-power: uint }
+)
+
+(define-map ethical-goals
+  { user: principal }
+  {
+    min-environmental-score: uint,
+    min-social-score: uint,
+    min-governance-score: uint,
+    min-overall-score: uint,
+    created-at: uint,
+    last-checked: uint,
+    is-active: bool
+  }
+)
+
+(define-map goal-compliance-history
+  { user: principal, check-block: uint }
+  {
+    was-compliant: bool,
+    portfolio-env-score: uint,
+    portfolio-social-score: uint,
+    portfolio-gov-score: uint,
+    portfolio-overall-score: uint
+  }
+)
+
+(define-map user-achievements
+  { user: principal }
+  {
+    total-checks: uint,
+    compliant-checks: uint,
+    current-streak: uint,
+    longest-streak: uint,
+    last-achievement-block: uint
+  }
 )
 
 (define-public (add-investment 
@@ -882,5 +920,276 @@
     (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
     (var-set min-reputation-to-vote new-min)
     (ok new-min)
+  )
+)
+
+(define-public (set-ethical-goal 
+  (min-env-score uint)
+  (min-social-score uint)
+  (min-gov-score uint)
+  (min-overall-score uint))
+  (let 
+    (
+      (existing-goal (map-get? ethical-goals { user: tx-sender }))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (and (<= min-env-score u100) (<= min-social-score u100) (<= min-gov-score u100) (<= min-overall-score u100)) ERR_INVALID_SCORE)
+    (asserts! (or (> min-env-score u0) (> min-social-score u0) (> min-gov-score u0) (> min-overall-score u0)) ERR_INVALID_GOAL)
+    
+    (map-set ethical-goals
+      { user: tx-sender }
+      {
+        min-environmental-score: min-env-score,
+        min-social-score: min-social-score,
+        min-governance-score: min-gov-score,
+        min-overall-score: min-overall-score,
+        created-at: stacks-block-height,
+        last-checked: stacks-block-height,
+        is-active: true
+      }
+    )
+    
+    (if (is-none existing-goal)
+      (map-set user-achievements
+        { user: tx-sender }
+        {
+          total-checks: u0,
+          compliant-checks: u0,
+          current-streak: u0,
+          longest-streak: u0,
+          last-achievement-block: stacks-block-height
+        }
+      )
+      true
+    )
+    
+    (ok true)
+  )
+)
+
+(define-public (update-ethical-goal 
+  (min-env-score uint)
+  (min-social-score uint)
+  (min-gov-score uint)
+  (min-overall-score uint))
+  (let 
+    (
+      (existing-goal (unwrap! (map-get? ethical-goals { user: tx-sender }) ERR_GOAL_NOT_FOUND))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (and (<= min-env-score u100) (<= min-social-score u100) (<= min-gov-score u100) (<= min-overall-score u100)) ERR_INVALID_SCORE)
+    (asserts! (or (> min-env-score u0) (> min-social-score u0) (> min-gov-score u0) (> min-overall-score u0)) ERR_INVALID_GOAL)
+    
+    (map-set ethical-goals
+      { user: tx-sender }
+      (merge existing-goal {
+        min-environmental-score: min-env-score,
+        min-social-score: min-social-score,
+        min-governance-score: min-gov-score,
+        min-overall-score: min-overall-score
+      })
+    )
+    
+    (ok true)
+  )
+)
+
+(define-public (toggle-goal-active)
+  (let 
+    (
+      (existing-goal (unwrap! (map-get? ethical-goals { user: tx-sender }) ERR_GOAL_NOT_FOUND))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    
+    (map-set ethical-goals
+      { user: tx-sender }
+      (merge existing-goal {
+        is-active: (not (get is-active existing-goal))
+      })
+    )
+    
+    (ok (not (get is-active existing-goal)))
+  )
+)
+
+(define-public (check-goal-compliance)
+  (let 
+    (
+      (goal (unwrap! (map-get? ethical-goals { user: tx-sender }) ERR_GOAL_NOT_FOUND))
+      (portfolio-ethics (unwrap! (calculate-portfolio-ethics tx-sender) ERR_PORTFOLIO_EMPTY))
+      (achievements (default-to 
+                      { total-checks: u0, compliant-checks: u0, current-streak: u0, longest-streak: u0, last-achievement-block: u0 }
+                      (map-get? user-achievements { user: tx-sender })))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (get is-active goal) ERR_UNAUTHORIZED)
+    
+    (let 
+      (
+        (portfolio-env (get total-env portfolio-ethics))
+        (portfolio-social (get total-social portfolio-ethics))
+        (portfolio-gov (get total-gov portfolio-ethics))
+        (portfolio-overall (get total-overall portfolio-ethics))
+        (portfolio-count (get count portfolio-ethics))
+        (avg-env (if (> portfolio-count u0) (/ portfolio-env portfolio-count) u0))
+        (avg-social (if (> portfolio-count u0) (/ portfolio-social portfolio-count) u0))
+        (avg-gov (if (> portfolio-count u0) (/ portfolio-gov portfolio-count) u0))
+        (avg-overall (if (> portfolio-count u0) (/ portfolio-overall portfolio-count) u0))
+        (is-compliant (and 
+                        (>= avg-env (get min-environmental-score goal))
+                        (>= avg-social (get min-social-score goal))
+                        (>= avg-gov (get min-governance-score goal))
+                        (>= avg-overall (get min-overall-score goal))))
+        (new-streak (if is-compliant (+ (get current-streak achievements) u1) u0))
+        (new-longest-streak (if (> new-streak (get longest-streak achievements)) new-streak (get longest-streak achievements)))
+      )
+      
+      (map-set goal-compliance-history
+        { user: tx-sender, check-block: stacks-block-height }
+        {
+          was-compliant: is-compliant,
+          portfolio-env-score: avg-env,
+          portfolio-social-score: avg-social,
+          portfolio-gov-score: avg-gov,
+          portfolio-overall-score: avg-overall
+        }
+      )
+      
+      (map-set user-achievements
+        { user: tx-sender }
+        {
+          total-checks: (+ (get total-checks achievements) u1),
+          compliant-checks: (+ (get compliant-checks achievements) (if is-compliant u1 u0)),
+          current-streak: new-streak,
+          longest-streak: new-longest-streak,
+          last-achievement-block: stacks-block-height
+        }
+      )
+      
+      (map-set ethical-goals
+        { user: tx-sender }
+        (merge goal {
+          last-checked: stacks-block-height
+        })
+      )
+      
+      (ok {
+        is-compliant: is-compliant,
+        portfolio-avg-env: avg-env,
+        portfolio-avg-social: avg-social,
+        portfolio-avg-gov: avg-gov,
+        portfolio-avg-overall: avg-overall,
+        current-streak: new-streak
+      })
+    )
+  )
+)
+
+(define-read-only (get-ethical-goal (user principal))
+  (map-get? ethical-goals { user: user })
+)
+
+(define-read-only (get-goal-compliance-at-block (user principal) (target-block uint))
+  (map-get? goal-compliance-history { user: user, check-block: target-block })
+)
+
+(define-read-only (get-user-achievements (user principal))
+  (map-get? user-achievements { user: user })
+)
+
+(define-read-only (calculate-compliance-rate (user principal))
+  (let 
+    (
+      (achievements (map-get? user-achievements { user: user }))
+    )
+    (if (is-some achievements)
+      (let 
+        (
+          (achievement-data (unwrap-panic achievements))
+          (total (get total-checks achievement-data))
+          (compliant (get compliant-checks achievement-data))
+        )
+        (ok {
+          total-checks: total,
+          compliant-checks: compliant,
+          compliance-rate: (if (> total u0) (/ (* compliant u100) total) u0),
+          current-streak: (get current-streak achievement-data),
+          longest-streak: (get longest-streak achievement-data)
+        })
+      )
+      (err ERR_GOAL_NOT_FOUND)
+    )
+  )
+)
+
+(define-read-only (is-portfolio-compliant (user principal))
+  (let 
+    (
+      (goal (map-get? ethical-goals { user: user }))
+      (portfolio-ethics-result (calculate-portfolio-ethics user))
+    )
+    (if (and (is-some goal) (is-ok portfolio-ethics-result))
+      (let 
+        (
+          (goal-data (unwrap-panic goal))
+          (portfolio-ethics (unwrap-panic portfolio-ethics-result))
+          (portfolio-env (get total-env portfolio-ethics))
+          (portfolio-social (get total-social portfolio-ethics))
+          (portfolio-gov (get total-gov portfolio-ethics))
+          (portfolio-overall (get total-overall portfolio-ethics))
+          (portfolio-count (get count portfolio-ethics))
+          (avg-env (if (> portfolio-count u0) (/ portfolio-env portfolio-count) u0))
+          (avg-social (if (> portfolio-count u0) (/ portfolio-social portfolio-count) u0))
+          (avg-gov (if (> portfolio-count u0) (/ portfolio-gov portfolio-count) u0))
+          (avg-overall (if (> portfolio-count u0) (/ portfolio-overall portfolio-count) u0))
+        )
+        (ok {
+          is-compliant: (and 
+                          (>= avg-env (get min-environmental-score goal-data))
+                          (>= avg-social (get min-social-score goal-data))
+                          (>= avg-gov (get min-governance-score goal-data))
+                          (>= avg-overall (get min-overall-score goal-data))),
+          current-env: avg-env,
+          required-env: (get min-environmental-score goal-data),
+          current-social: avg-social,
+          required-social: (get min-social-score goal-data),
+          current-gov: avg-gov,
+          required-gov: (get min-governance-score goal-data),
+          current-overall: avg-overall,
+          required-overall: (get min-overall-score goal-data)
+        })
+      )
+      (err ERR_GOAL_NOT_FOUND)
+    )
+  )
+)
+
+(define-read-only (get-goal-gap-analysis (user principal))
+  (match (is-portfolio-compliant user)
+    success 
+      (let 
+        (
+          (env-gap (if (< (get current-env success) (get required-env success))
+                     (- (get required-env success) (get current-env success))
+                     u0))
+          (social-gap (if (< (get current-social success) (get required-social success))
+                        (- (get required-social success) (get current-social success))
+                        u0))
+          (gov-gap (if (< (get current-gov success) (get required-gov success))
+                     (- (get required-gov success) (get current-gov success))
+                     u0))
+          (overall-gap (if (< (get current-overall success) (get required-overall success))
+                         (- (get required-overall success) (get current-overall success))
+                         u0))
+        )
+        (ok {
+          environmental-gap: env-gap,
+          social-gap: social-gap,
+          governance-gap: gov-gap,
+          overall-gap: overall-gap,
+          needs-improvement: (or (> env-gap u0) (> social-gap u0) (> gov-gap u0) (> overall-gap u0))
+        })
+      )
+    error (err error)
   )
 )

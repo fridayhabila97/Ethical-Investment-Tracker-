@@ -48,6 +48,14 @@ This contract allows users to:
 - 🔒 Time-locked voting periods
 - 📈 Consensus strength indicators
 
+### Ethical Investment Goals & Compliance
+- 🎯 Personalized ESG target setting for portfolios
+- ✅ Automated compliance monitoring and tracking
+- 📊 Real-time gap analysis and improvement insights
+- 🏆 Achievement system with streak tracking
+- 📈 Historical compliance rate calculations
+- 🎮 Gamified ethical investing experience
+
 ## 🔧 Contract Functions
 
 ### Public Functions
@@ -105,6 +113,30 @@ Finalizes a verification proposal and updates scores if approved.
 (set-min-reputation-to-vote new-min)
 ```
 Owner-only function to set minimum reputation required to participate in voting.
+
+#### `set-ethical-goal`
+```clarity
+(set-ethical-goal min-env-score min-social-score min-gov-score min-overall-score)
+```
+Creates personalized ESG targets for your portfolio with minimum thresholds.
+
+#### `update-ethical-goal`
+```clarity
+(update-ethical-goal min-env-score min-social-score min-gov-score min-overall-score)
+```
+Updates existing ethical investment goals with new thresholds.
+
+#### `toggle-goal-active`
+```clarity
+(toggle-goal-active)
+```
+Activates or pauses goal compliance tracking for your portfolio.
+
+#### `check-goal-compliance`
+```clarity
+(check-goal-compliance)
+```
+Performs compliance check against your goals and updates achievement stats.
 
 ### Read-Only Functions
 
@@ -222,6 +254,42 @@ Returns list of currently active verification proposals.
 ```
 Returns investment scores with consensus strength indicators.
 
+#### `get-ethical-goal`
+```clarity
+(get-ethical-goal user)
+```
+Returns user's ethical investment goals and current status.
+
+#### `get-goal-compliance-at-block`
+```clarity
+(get-goal-compliance-at-block user block-height)
+```
+Returns historical compliance status at a specific block height.
+
+#### `get-user-achievements`
+```clarity
+(get-user-achievements user)
+```
+Returns achievement statistics including streaks and compliance history.
+
+#### `calculate-compliance-rate`
+```clarity
+(calculate-compliance-rate user)
+```
+Calculates overall compliance percentage and streak information.
+
+#### `is-portfolio-compliant`
+```clarity
+(is-portfolio-compliant user)
+```
+Checks if current portfolio meets all ethical goal thresholds.
+
+#### `get-goal-gap-analysis`
+```clarity
+(get-goal-gap-analysis user)
+```
+Analyzes gaps between current scores and goals for improvement guidance.
+
 ## 🎯 Usage Examples
 
 ### Adding an Investment
@@ -299,6 +367,34 @@ Returns investment scores with consensus strength indicators.
 ```clarity
 (contract-call? .ethical-investment-tracker calculate-consensus-score 
   u1)
+```
+
+### Goal Tracking Examples
+
+#### Setting Ethical Goals
+```clarity
+(contract-call? .ethical-investment-tracker set-ethical-goal 
+  u75 
+  u70 
+  u80 
+  u75)
+```
+
+#### Checking Compliance
+```clarity
+(contract-call? .ethical-investment-tracker check-goal-compliance)
+```
+
+#### Viewing Gap Analysis
+```clarity
+(contract-call? .ethical-investment-tracker get-goal-gap-analysis 
+  'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
+```
+
+#### Tracking Achievements
+```clarity
+(contract-call? .ethical-investment-tracker calculate-compliance-rate 
+  'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
 ```
 
 ## 📊 ESG Scoring System
