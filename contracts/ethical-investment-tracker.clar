@@ -15,6 +15,9 @@
 (define-constant ERR_INVALID_GOAL (err u113))
 (define-constant ERR_GOAL_EXISTS (err u114))
 
+(define-constant ERR_INVALID_WEIGHT (err u115))
+(define-constant ERR_PREFERENCES_NOT_SET (err u116))
+
 (define-data-var contract-active bool true)
 (define-data-var total-investments uint u0)
 (define-data-var verification-counter uint u0)
@@ -120,6 +123,16 @@
     current-streak: uint,
     longest-streak: uint,
     last-achievement-block: uint
+  }
+)
+
+(define-map user-esg-preferences
+  { user: principal }
+  {
+    env-weight: uint,
+    social-weight: uint,
+    gov-weight: uint,
+    created-at: uint
   }
 )
 
@@ -1191,5 +1204,68 @@
         })
       )
     error (err error)
+  )
+)
+
+(define-public (set-esg-preferences (env-weight uint) (social-weight uint) (gov-weight uint))
+  (let 
+    (
+      (sum (+ env-weight (+ social-weight gov-weight)))
+    )
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (asserts! (<= env-weight u100) ERR_INVALID_SCORE)
+    (asserts! (<= social-weight u100) ERR_INVALID_SCORE)
+    (asserts! (<= gov-weight u100) ERR_INVALID_SCORE)
+    (asserts! (is-eq sum u100) ERR_INVALID_WEIGHT)
+    (map-set user-esg-preferences
+      { user: tx-sender }
+      {
+        env-weight: env-weight,
+        social-weight: social-weight,
+        gov-weight: gov-weight,
+        created-at: stacks-block-height
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-read-only (get-esg-preferences (user principal))
+  (map-get? user-esg-preferences { user: user })
+)
+
+(define-read-only (calculate-weighted-portfolio-ethics (user principal))
+  (let 
+    (
+      (prefs (map-get? user-esg-preferences { user: user }))
+      (portfolio-ethics-result (calculate-portfolio-ethics user))
+    )
+    (if (is-some prefs)
+      (match portfolio-ethics-result
+        success 
+          (let 
+            (
+              (pref-data (unwrap-panic prefs))
+              (portfolio-env (get total-env success))
+              (portfolio-social (get total-social success))
+              (portfolio-gov (get total-gov success))
+              (portfolio-overall (get total-overall success))
+              (portfolio-count (get count success))
+              (avg-env (if (> portfolio-count u0) (/ portfolio-env portfolio-count) u0))
+              (avg-social (if (> portfolio-count u0) (/ portfolio-social portfolio-count) u0))
+              (avg-gov (if (> portfolio-count u0) (/ portfolio-gov portfolio-count) u0))
+              (weighted-overall (/ (+ (* avg-env (get env-weight pref-data)) (* avg-social (get social-weight pref-data)) (* avg-gov (get gov-weight pref-data))) u100))
+            )
+            (ok {
+              avg-env: avg-env,
+              avg-social: avg-social,
+              avg-gov: avg-gov,
+              weighted-overall: weighted-overall
+            })
+          )
+        error (err error)
+      )
+      (err ERR_PREFERENCES_NOT_SET)
+    )
   )
 )
