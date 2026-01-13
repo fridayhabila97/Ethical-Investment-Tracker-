@@ -178,6 +178,50 @@
   )
 )
 
+(define-private (apply-price-update (update { investment-id: uint, new-price: uint }) (acc { updated: uint, failed: uint }))
+  (let 
+    (
+      (investment (map-get? investments { investment-id: (get investment-id update) }))
+      (price (get new-price update))
+    )
+    (if (and (is-some investment) (> price u0))
+      (let 
+        (
+          (inv (unwrap-panic investment))
+        )
+        (map-set investments
+          { investment-id: (get investment-id update) }
+          (merge inv {
+            current-price: price,
+            last-price-update: stacks-block-height
+          })
+        )
+        (map-set price-history
+          { investment-id: (get investment-id update), block-height: stacks-block-height }
+          {
+            price: price,
+            timestamp: stacks-block-height
+          }
+        )
+        {
+          updated: (+ (get updated acc) u1),
+          failed: (get failed acc)
+        }
+      )
+      {
+        updated: (get updated acc),
+        failed: (+ (get failed acc) u1)
+      }
+    )
+  )
+)
+
+(define-public (batch-update-investment-prices (updates (list 20 { investment-id: uint, new-price: uint })))
+  (begin
+    (asserts! (var-get contract-active) ERR_UNAUTHORIZED)
+    (ok (fold apply-price-update updates { updated: u0, failed: u0 }))
+  )
+)
 (define-public (add-to-portfolio 
   (investment-id uint)
   (amount uint)
